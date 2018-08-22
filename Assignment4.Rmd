@@ -1,0 +1,176 @@
+---
+title: "assignment4"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(psych)
+library(DHARMa)
+library(rcompanion)
+library(caret)
+```
+
+```{r}
+load("eye_FR_traindata-1")
+load("eye_FR_testdata-1")
+```
+
+3. Exploring training data set 
+```{r}
+glimpse(traindata)
+```
+
+The data set contains 8 variables and 117 observations from 117 participants. There are three binary variables (time of exposure, whether the identification was correct or not, and whether perpatrator was absent or not), two continuous variables (confidence and line-up reaction time) and finally two ordinal self-report measures of how their decision was and whether they rejected the lineup because the faces were unlike the perpetrator. The line-up accuracy variable is set as numeric but it should be a factor, which we fix below.
+
+```{r}
+traindata$lineupacc <- as.factor(traindata$lineupacc)
+describe(traindata)
+```
+A look at the descriptives indicates that only one participant contributed one observation, which helps with assuming independence of our observations. There don't seem to be any illegal values in the binary or ordinal variables as all values fall within the established scales. Of the two continuous variables, confidence appears to be roughly centred while reaction time shows quite severe skew. This will be visually explored.
+
+```{r}
+hist(traindata$confidence)
+```
+This histogram shows that most values fall around the 50% confidence mark, while there appear to be a considerable number of values at the extremes. This suggests that participants were either very confident, not confident at all, or fairly confident about their choices,  but more rarely showed intermediate forms of confidence between the three. 
+```{r}
+hist(traindata$lineuprt)
+```
+The reaction time variable appears to show severe positive skew with the great majority of values falling below 40000; there are a number of notable outliers, which reach more than 120 000. This should be kept in mind when we run our analysis. 
+
+```{r}
+pairs.panels(traindata)
+```
+
+Next we have a look at the correlations between our variables. If we assume that line-up accuracy will be our modelling variable, the following correlations are of note: exposure shows a moderate relationship with line-up accuracy, suggesting that longer exposure time led to increased accuracy in identification, as well as an associated rise in confidence associated with one's selection. Confidence shows a small to large correlation with lineup accuracy, suggesting that higher confidence in one's selection as associated with more correct identifications. Another small to moderate relationship is found that selections are more accurate when the perpetrator is present in the line-up. The other correlations with accuracy are rather low (< .20), suggesting that they may not be very predictive in our modelling. There are no worryingly high correlations betwen the predictors, thus we can assume that collinearity will not be a problem for modelling here. In conclusion, an initial look at the data suggests that confidence, presence or absence of perpetrator in line-up and a longer exposure time will be most predictive of one's accuracy in identification. This will now be investigated in the modelling phase.
+
+Question 4.
+
+(a) First we want to create a basline model including control variables for the four different conditions of the study design. We run a logistic regression to account for these effects first and then will compare subsequent models to see whether additional predictors can significantly improve upon it.
+
+```{r}
+control_model <- glm(lineupacc ~ lineuptpta + exposure, family = "binomial", data = traindata)
+summary(control_model)
+```
+
+The model above suggests that there are significant differences found in the respective design conditions for line-up accuracy (both for presence of perpetrator and for length of time exposed in line-up). This model will serve as a comparison model once we have constructed a model including our variables of interest. The AIC reported is 126.84. Measures of fit and effect size will need to be compared to this model in order to be meaningfully interpreted. 
+
+Experimental Model Construction
+
+(b) We next evaluate our other variables of interest in order to evaluate whether adding them significantly improves the overall fit of our model for predicting the identification accuracy. First we consider the interaction between the presence of the perpatrator and (1) the automatic nature of one's decision and (2) face comparison. Given that this these interactions are to be expected, we have apriori reasons for considering it's inclusion as the initial step in the model. Both interactions were found to be significant inidividually, therefore they should be accounted for in our model. Next we evaluate whether they are signficant when entered together.
+
+```{r}
+model1 <- glm(lineupacc ~ exposure + lineuptpta*automatic, family = "binomial", data = traindata)
+summary(model1) 
+```
+
+```{r}
+model2 <- glm(lineupacc ~ exposure + lineuptpta*facecomparison, family = "binomial", data = traindata)
+summary(model2)
+```
+
+When considered together, both interaction efects are significant; thus, they will both be included simultaneously in the model.  
+
+```{r}
+model3 <- glm(lineupacc ~ exposure + lineuptpta + lineuptpta*automatic + lineuptpta*facecomparison, family = "binomial", data = traindata)
+summary(model3)
+```
+
+The inclusion of reaction time doesn't seem to add anything significant to the model (in fact AIC is bigger than model 3, indicating that we shouldn't consider it in our model). Thus model3 is our final model and we do not include reaction time.
+
+```{r}
+model4 <-  glm(lineupacc ~ exposure + lineuptpta + lineuptpta*automatic + lineuptpta*facecomparison + lineuprt, family = "binomial", data = traindata) 
+summary(model4) 
+```
+
+Next we formally conduct a log-likelihood ratio test beteween our experimental model and control model, to evaluate its usefulness in predicting eyewitness accuracy. The overall comparison test was found to be significant (p <.001), with an overall R-squared change of 0.530, indicating that our experimental model improved the fit of the control model with a large effect size. The calculated AIC for our final model is 86.018, which is considerably lower than our control model (126.84). Given that AIC incoroporates both measures of model fit as well as model simplicity (i.e. models with fewer variables), we can be confident that our added variables are meaningfully improving the model.
+
+```{r}
+nagelkerke(model3, control_model)
+```
+
+(c) The models considered above suggest a number of predictors are useful in predicting the accuracy of the decision that someone makes during eye-witness testimony. This has implications for how eye-witness testimony is conducted and how reliable someone's report may be when testifying in court. Firstly, an interaction effect between automatic strategy and the presence/absence of the perpetrator is present. 
+
+
+Some diagnostics using the Dharma package. The scaled residuals do not deviate too far from the red lines and the KS test is not significant, therefore we can assume that the residuals are not having an undue influence on our model results.
+
+```{r}
+plot(simulateResiduals(control_model))
+```
+```{r}
+plot(simulateResiduals(model3))
+```
+
+Question 5.
+
+First we build the model that we are wanting to apply, considering the presence of the perpetrator and associated confidence.
+
+```{r}
+model_predict <- glm(lineupacc ~ lineuptpta + confidence, family = "binomial", data = traindata) 
+```
+
+(i) Now we construct a new data frame for each of the respective line-up conditions (i.e. perp present or absent) and calculate the respective probabilities for a correct identification under 80% confidence. 
+
+```{r}
+newdata1 = data.frame(lineuptpta = "ta", confidence = 80)
+
+pred1 <- predict(model_predict, newdata1, type = "response")
+
+```
+
+When the perpetrator is absent, there is a predicted probability of 0.75 (i.e. 75%) that someone with 80% confidence will correctly determine that the perpetrator is not present in the line-up.
+
+```{r}
+newdata2 = data.frame(lineuptpta = "tp", confidence = 80)
+
+pred2 <- predict(model_predict, newdata2, type = "response")
+```
+
+When the perpetrator is present, however, there is a predicted probability of 0.51 (i.e. 51%) that someone with 80% confidence will correctly determine that the perpetrator is present in the line-up. This is not different to chance and thus it suggests that high confidence in a positive detection may not be informative of accurate but that high confidence in a negative detection (saying that the perp is not there) may be informative. 
+
+(ii) Converting from probabilities to odds.
+
+When perpetrator is absent, the odds are roughly 3:1, indicating that this person will on average be correct 3 out of 4 times.
+
+```{r}
+odds1 <- pred1/(1-pred1)
+print(odds1)
+```
+When the perpetrator is present, the odds are roughly 1:1, meaning that a correct or false identification are equally as likely. 
+
+```{r}
+odds2 <- pred2/(1-pred2)
+print(odds2)
+```
+(iii) Calculating the partial odds for the relationship between confidence and the presence or absence of the perpetrator in the line-up. 
+
+```{r}
+summary(model_predict)
+```
+Calculating the partial odds for both variables.
+
+```{r}
+exp(coefficients(model_predict))
+```
+
+Thus, the respective partial odds for each variable is 0.35 and 1.02.
+
+(b) Create a confusion matrix.
+
+We can assess the accuracy of the above model through looking at a confusion matrix and interpreting the specificity and sensitivity. 
+
+Sensitivity here refers to the fraction of people correctly identifying the perpetrator as present in the line-up. The value found (see table below) is 0.55, suggesting that using this model only 55% of positive identifications were correct. Considering we expect 50% by chance, this indicates that are model is not much better than chance. 
+
+Specificity here refers to the fraction of people correctly identifying the perpetrator as absent in the line-up. The value found was 0.65, suggesting that using this model, 65% of absent identifications were correct. While this is not much higher, it seems to do better than chance alone. Thus, it seems that the model is relatively better at correctly identifying when the perpetrator is absent as opposed to correctly identifying that the perpetrator is present. The significance test suggests that our model is not significant (p = 0.055), thus overall our model does not do better in chance in predicting a correct response in lineup accuracy.
+
+
+```{r}
+predict1 <- predict(model_predict, traindata, type="response")
+
+confusionMatrix(as.factor(as.numeric(predict1 >= .5)), 
+                as.factor(traindata$lineupacc))
+
+```
+
+Question: 6 in picture in project folder. 
+
